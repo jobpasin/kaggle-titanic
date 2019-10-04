@@ -1,107 +1,150 @@
+#  Following https://www.kaggle.com/startupsci/titanic-data-science-solutions
+
+# data analysis and wrangling
+import pandas as pd
 import numpy as np
-import os
-import random
-import argparse
-import tensorflow as tf
-import csv
-from sklearn.model_selection import train_test_split
-from sklearn import preprocessing
-import datetime
+import random as rnd
+
+# visualization
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+# machine learning
+from sklearn.linear_model import LogisticRegression
+from sklearn.svm import SVC, LinearSVC
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.naive_bayes import GaussianNB
+from sklearn.linear_model import Perceptron
+from sklearn.linear_model import SGDClassifier
+from sklearn.tree import DecisionTreeClassifier
 
 
-def get_train_data(file_directory):
-    with open(file_directory, 'r') as f:
-        reader = csv.reader(f)
-        header = next(reader)
-        data = []
-        label = []
-        for row in reader:
-            sex_dict = {'male': 0, 'female': 1}
-            passenger_id = float(row[0])
-            is_survive = int(row[1])
-            p_class = float(row[2])
-            sex = sex_dict[row[4]]
-            if row[5] == '':
-                age = -1
-            else:
-                age = float(row[5])
-            sibling = float(row[6])
-            parent = float(row[7])
-            if row[9] == '':
-                fare = -1
-            else:
-                fare = float(row[9])
-            embarked_dict = {'C': 0, 'Q': 1, 'S': 2, '': 3}
-            embarked = embarked_dict[row[11]]
-            new_row = [passenger_id, p_class, sex, age, sibling, parent, fare, embarked]
-            data.append(new_row)
-            label.append(is_survive)
-    # combined = list(zip(data, label))
-    # random.shuffle(combined)
-    # data[:], label[:] = zip(*combined)
-    return np.array(data), tf.keras.utils.to_categorical(label,2)
+def main():
+    train_df = pd.read_csv('./data/train.csv')
+    test_df = pd.read_csv('./data/test.csv')
+    combine = [train_df, test_df]
+
+    # Remove 'Ticket', 'Cabin' feature
+    train_df = train_df.drop(['Ticket', 'Cabin'], axis=1)
+    test_df = test_df.drop(['Ticket', 'Cabin'], axis=1)
+    combine = [train_df, test_df]
+
+    # Create 'Title' feature
+    # Create 'Title' feature
+    for dataset in combine:
+        dataset['Title'] = dataset.Name.str.extract(' ([A-Za-z]+)\.', expand=False)
+
+    # Replace and group some title
+    for dataset in combine:
+        dataset['Title'] = dataset['Title'].replace(['Lady', 'Countess', 'Capt', 'Col',
+                                                     'Don', 'Dr', 'Major', 'Rev', 'Sir', 'Jonkheer', 'Dona'], 'Rare')
+        dataset['Title'] = dataset['Title'].replace('Mlle', 'Miss')
+        dataset['Title'] = dataset['Title'].replace('Ms', 'Miss')
+        dataset['Title'] = dataset['Title'].replace('Mme', 'Mrs')
+
+    # Map title into value
+    title_mapping = {"Mr": 1, "Miss": 2, "Mrs": 3, "Master": 4, "Rare": 5}
+    for dataset in combine:
+        dataset['Title'] = dataset['Title'].map(title_mapping)
+        dataset['Title'] = dataset['Title'].fillna(0)
+
+    # Remove 'Name' from dataset
+    train_df = train_df.drop(['Name', 'PassengerId'], axis=1)
+    test_df = test_df.drop(['Name'], axis=1)
+    combine = [train_df, test_df]
+
+    # Map gender into value
+    for dataset in combine:
+        dataset['Sex'] = dataset['Sex'].map({'female': 1, 'male': 0}).astype(int)
+
+    # Fill the missing value by using median of age for those Pclass and Gender combined
+    guess_ages = np.zeros((2, 3))
+    # Convert age data as int (rounding to 0.5)
+
+    # Fill Nan with median
+    for dataset in combine:
+        for i in range(0, 2):
+            for j in range(0, 3):
+                guess_df = dataset[(dataset['Sex'] == i) & \
+                                   (dataset['Pclass'] == j + 1)]['Age'].dropna()
+
+                # age_mean = guess_df.mean()
+                # age_std = guess_df.std()
+                # age_guess = rnd.uniform(age_mean - age_std, age_mean + age_std)
+
+                age_guess = guess_df.median()
+
+                # Convert random age float to nearest .5 age
+                guess_ages[i, j] = int(age_guess / 0.5 + 0.5) * 0.5
+
+        for i in range(0, 2):
+            for j in range(0, 3):
+                dataset.loc[(dataset.Age.isnull()) & (dataset.Sex == i) & (dataset.Pclass == j + 1), \
+                            'Age'] = guess_ages[i, j]
+
+        dataset['Age'] = dataset['Age'].astype(int)
+
+    # Create 'AgeBand' type
+    train_df['AgeBand'] = pd.cut(train_df['Age'], 5)
+
+    # Map 'Age' within 'AgeBand'
+    for dataset in combine:
+        dataset.loc[dataset['Age'] <= 16, 'Age'] = 0
+        dataset.loc[(dataset['Age'] > 16) & (dataset['Age'] <= 32), 'Age'] = 1
+        dataset.loc[(dataset['Age'] > 32) & (dataset['Age'] <= 48), 'Age'] = 2
+        dataset.loc[(dataset['Age'] > 48) & (dataset['Age'] <= 64), 'Age'] = 3
+        dataset.loc[dataset['Age'] > 64, 'Age'] = 4
+    train_df = train_df.drop(['AgeBand'], axis=1)
+    combine = [train_df, test_df]
+
+    # Create new features by combining existing feature
+    for dataset in combine:
+        dataset['FamilySize'] = dataset['SibSp'] + dataset['Parch'] + 1
+    # Create feature is alone
+    for dataset in combine:
+        dataset['IsAlone'] = 0
+        dataset.loc[dataset['FamilySize'] == 1, 'IsAlone'] = 1
+    train_df = train_df.drop(['Parch', 'SibSp', 'FamilySize'], axis=1)
+    test_df = test_df.drop(['Parch', 'SibSp', 'FamilySize'], axis=1)
+    combine = [train_df, test_df]
+
+    # Create artificial of Pclass and age
+    for dataset in combine:
+        dataset['Age*Class'] = dataset.Age * dataset.Pclass
+
+    # Convert embark feature, fill missing data with most common occurance
+    freq_port = train_df.Embarked.dropna().mode()[0]
+    for dataset in combine:
+        dataset['Embarked'] = dataset['Embarked'].fillna(freq_port)
+
+    # Map 'Embarked' into value
+    for dataset in combine:
+        dataset['Embarked'] = dataset['Embarked'].map({'S': 0, 'C': 1, 'Q': 2}).astype(int)
+
+    # Fill missing value of 'Fare' with training median
+    train_df['Fare'].fillna(train_df['Fare'].dropna().median(), inplace=True)
+    test_df['Fare'].fillna(train_df['Fare'].dropna().median(), inplace=True)
+    # Split by quatile
+    train_df['FareBand'] = pd.qcut(train_df['Fare'], 4)
+    # Map 'Fare' into value
+    for dataset in combine:
+        dataset.loc[dataset['Fare'] <= 7.91, 'Fare'] = 0
+        dataset.loc[(dataset['Fare'] > 7.91) & (dataset['Fare'] <= 14.454), 'Fare'] = 1
+        dataset.loc[(dataset['Fare'] > 14.454) & (dataset['Fare'] <= 31), 'Fare'] = 2
+        dataset.loc[dataset['Fare'] > 31, 'Fare'] = 3
+        dataset['Fare'] = dataset['Fare'].astype(int)
+
+    train_df = train_df.drop(['FareBand'], axis=1)
+    combine = [train_df, test_df]
+
+    X_train = train_df.drop("Survived", axis=1)
+    Y_train = train_df["Survived"]
+    test_id = test_df["PassengerId"]
+    X_test = test_df.drop("PassengerId", axis=1).copy()
+    return X_train.to_numpy(), Y_train.to_numpy(), X_test.to_numpy(), test_id.to_numpy()
 
 
-def get_test_data(file_directory):
-    with open(file_directory, 'r') as f:
-        reader = csv.reader(f)
-        header = next(reader)
-        data = []
-        for row in reader:
-            sex_dict = {'male': 0, 'female': 1}
-            passenger_id = float(row[0])
-            p_class = float(row[1])
-            sex = sex_dict[row[3]]
-            if row[4] == '':
-                age = -1
-            else:
-                age = float(row[4])
-            sibling = float(row[5])
-            parent = float(row[6])
-            if row[8] == '':
-                fare = -1
-            else:
-                fare = float(row[8])
-            embarked_dict = {'C': 0, 'Q': 1, 'S': 2, '': 3}
-            embarked = embarked_dict[row[10]]
-            new_row = [passenger_id, p_class, sex, age, sibling, parent, fare, embarked]
-            data.append(new_row)
-    return np.array(data)
-
-
-def train(data, label, data_test, label_test):
-    model = tf.keras.Sequential()
-    model.add(tf.keras.layers.Dense(10, activation=tf.nn.relu, input_dim=8))
-    model.add(tf.keras.layers.Dense(10, activation=tf.nn.relu))
-    model.add(tf.keras.layers.Dense(2, activation=tf.nn.softmax))
-
-    sgd = tf.keras.optimizers.Adam(lr=0.001)
-    logdir = "logs/scalars/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=logdir)
-
-    model.compile(loss='categorical_crossentropy', optimizer=sgd, metrics=['accuracy'])
-    train_history = model.fit(data, label, batch_size=32, nb_epoch=100, verbose=1, validation_data=(data_test, label_test), callbacks=[tensorboard_callback])
-    print("Average train loss: ", np.average(train_history.history['loss']))
-    print("Average train accuracy: ", np.average(train_history.history['acc']))
-    return model
-
-TODO: Create gitignore, check tensorboard
 if __name__ == "__main__":
-    print(os.path.abspath("./data/train.csv"))
-    train_data, train_label = get_train_data("./train.csv")
-    test_data = get_test_data("./test.csv")
-    print(np.shape(train_data))
-    print(np.shape(train_label))
-    X_train, X_test, y_train, y_test = train_test_split(train_data, train_label, test_size=0.2)
-    std_scale = preprocessing.StandardScaler().fit(X_train)
-    X_train_norm = std_scale.transform(X_train)
-    X_test_norm = std_scale.transform(X_test)
-
-    model = train(X_train_norm, y_train, X_test_norm, y_test)
-    score = model.evaluate(X_test_norm, y_test, verbose=0)
-    result = model.predict(X_test_norm)
-
-    # for r, l in zip(result, y_test):
-    #     print("Label: %s, Prediction: %s with confidence %s" % (np.argmax(l),np.argmax(r), np.max(r)))
-
-
+    X_train, Y_train, X_test, id = main()
+    print(Y_train)
