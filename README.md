@@ -1,5 +1,5 @@
 # kaggle-titanic
-Simple machine learning project for predicting survival of passenger on Titanic.
+Simple machine learning project for predicting survival of passenger on Titanic based on person information (Gender, Age, etc.)
 
 Reference:  Dataset and problem from https://www.kaggle.com/c/titanic
 
